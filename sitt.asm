@@ -1,5 +1,5 @@
 ; sitt.asm - Cross-platform Windows & Linux x86-64 shitinthetoilet (.sitt)
-;            interpreter AND standalone AOT compiler (--exe, --elf, --app)
+;            CLI interpreter AND standalone AOT compiler (--exe [GUI], --elf, --app)
 ;
 ; Windows build:
 ;   nasm -f win64 sitt.asm -o sitt.obj
@@ -36,7 +36,7 @@ section .bss
     jit_buf         resb 65536      ; compiled native x86-64 machine code
     bin_buf         resb 131072     ; final PE / ELF / Mach-O file image
     loop_stack      resq 1024       ; patch offsets for Ω ... ∞ compilation
-    compile_mode    resb 1          ; 0=run, 1=--exe, 2=--elf, 3=--app
+    compile_mode    resb 1          ; 0=run, 1=--exe (GUI), 2=--elf, 3=--app
 %if IS_WIN
     bytes_read      resd 1
     bytes_written   resd 1
@@ -78,7 +78,8 @@ section .data
                     db '</dict></plist>', 10
     plist_len       equ $ - plist_data
 
-    ; Minimal 64-bit Windows PE header + import table (kernel32: GetStdHandle, WriteFile, ExitProcess)
+    ; 64-bit Windows GUI PE header + import table (KERNEL32: ExitProcess, USER32: MessageBoxA)
+    ; RVA .text = 0x1000, RVA .idata = 0x2000, RVA .bss = 0x3000
     pe_dos_stub:
         db 'M','Z', 0x90,0x00, 0x03,0x00, 0x00,0x00, 0x04,0x00, 0x00,0x00, 0xFF,0xFF, 0x00,0x00
         db 0xB8,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00, 0x40,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00
@@ -109,14 +110,14 @@ section .data
         dd 0x23000                      ; SizeOfImage
         dd 0x400                        ; SizeOfHeaders
         dd 0
-        dw 3                            ; Subsystem = WINDOWS_CUI (Console)
+        dw 2                            ; Subsystem = WINDOWS_GUI (no console window!)
         dw 0
         dq 0x100000, 0x1000, 0x100000, 0x1000
         dd 0
         dd 16                           ; NumberOfRvaAndSizes
         ; Data Directories (16 * 8 = 128 bytes)
         dd 0, 0                         ; 0 Export
-        dd 0x2000, 40                   ; 1 Import Directory (.idata RVA 0x2000)
+        dd 0x2000, 60                   ; 1 Import Directory (.idata RVA 0x2000, 3 descriptors)
         times (14 * 8) db 0
 
         ; Section 1: .text (RVA 0x1000, Raw 0x400, Size 0x1000, RWX)
@@ -142,24 +143,47 @@ section .data
     pe_headers_end:
 
     ; .idata contents at RVA 0x2000 (File offset 0x1400)
+    ; 0x2000: Import Descriptor 0 (KERNEL32.dll) - 20 bytes
+    ; 0x2014: Import Descriptor 1 (USER32.dll)   - 20 bytes
+    ; 0x2028: Null Import Descriptor             - 20 bytes
+    ; 0x203C: ILT KERNEL32 (ExitProcess, 0)      - 16 bytes
+    ; 0x204C: ILT USER32   (MessageBoxA, 0)      - 16 bytes
+    ; 0x205C: IAT KERNEL32 (ExitProcess = 0x205C)- 16 bytes
+    ; 0x206C: IAT USER32   (MessageBoxA = 0x206C)- 16 bytes
+    ; 0x207C: Strings & Window Title
     pe_idata:
-        dd 0x2028                       ; OriginalFirstThunk (ILT)
+        ; Descriptor 0: KERNEL32.dll
+        dd 0x203C                       ; OriginalFirstThunk (ILT)
         dd 0, 0
-        dd 0x2068                       ; Name RVA ("KERNEL32.dll")
-        dd 0x2048                       ; FirstThunk (IAT)
-        times 20 db 0                   ; Null import descriptor
-        ; ILT (0x2028)
-        dq 0x2076, 0x2086, 0x2092, 0
-        ; IAT (0x2048)
-        dq 0x2076, 0x2086, 0x2092, 0
-        ; Strings (0x2068)
-        db 'KERNEL32.dll', 0, 0         ; 0x2068 (14 bytes -> 0x2076)
+        dd 0x207C                       ; Name RVA ("KERNEL32.dll")
+        dd 0x205C                       ; FirstThunk (IAT)
+
+        ; Descriptor 1: USER32.dll
+        dd 0x204C                       ; OriginalFirstThunk (ILT)
+        dd 0, 0
+        dd 0x208A                       ; Name RVA ("USER32.dll")
+        dd 0x206C                       ; FirstThunk (IAT)
+
+        ; Null Descriptor
+        times 20 db 0
+
+        ; 0x203C: ILT KERNEL32
+        dq 0x2096, 0
+        ; 0x204C: ILT USER32
+        dq 0x20A4, 0
+        ; 0x205C: IAT KERNEL32 (ExitProcess -> [0x40205C])
+        dq 0x2096, 0
+        ; 0x206C: IAT USER32   (MessageBoxA -> [0x40206C])
+        dq 0x20A4, 0
+
+        ; 0x207C: DLL Names & Hint/Name entries
+        db 'KERNEL32.dll', 0, 0         ; 0x207C (14 bytes -> 0x208A)
+        db 'USER32.dll', 0, 0           ; 0x208A (12 bytes -> 0x2096)
         dw 0
-        db 'GetStdHandle', 0, 0         ; 0x2076 (16 bytes -> 0x2086)
+        db 'ExitProcess', 0             ; 0x2096 (14 bytes -> 0x20A4)
         dw 0
-        db 'WriteFile', 0               ; 0x2086 (12 bytes -> 0x2092)
-        dw 0
-        db 'ExitProcess', 0             ; 0x2092
+        db 'MessageBoxA', 0             ; 0x20A4 (14 bytes -> 0x20B2)
+        db 'shitinthetoilet', 0         ; 0x20B2 (GUI window title!)
     pe_idata_len    equ $ - pe_idata
 
 section .text
@@ -202,7 +226,6 @@ _start:
 
     mov     r12d, [bytes_read]
 %else
-    ; Parse Linux argv[1] on initial stack: [rsp] = argc, [rsp+8] = argv[0], [rsp+16] = argv[1]
     mov     rax, [rsp]
     cmp     rax, 2
     jl      .no_linux_args
@@ -232,7 +255,7 @@ _start:
     jne     compile_sitt
 
     ; =========================================================================
-    ; INTERPRETER MODE
+    ; CLI INTERPRETER MODE (runs in terminal)
     ; =========================================================================
     xor     rbx, rbx
     lea     r13, [rel tape]
@@ -477,17 +500,14 @@ next_1:
     jmp     main_loop
 
 ; =========================================================================
-; AOT COMPILER MODE (--exe = 1, --elf = 2, --app = 3)
-; Emits native x86-64 machine code into jit_buf (offset in rdi):
-;   R13 = tape pointer, R14 = out_buf write offset, R15 = out_buf base
+; AOT COMPILER MODE (--exe = 1 [Windows GUI], --elf = 2, --app = 3)
 ; =========================================================================
 compile_sitt:
-    xor     rbx, rbx                ; source index
-    xor     rdi, rdi                ; machine code byte offset in jit_buf
-    xor     r10, r10                ; loop_stack depth
+    xor     rbx, rbx
+    xor     rdi, rdi
+    xor     r10, r10
     lea     rbp, [rel jit_buf]
 
-    ; Emit target prologue setting R13 = tape, R15 = out_buf, R14 = 0
     mov     al, [rel compile_mode]
     cmp     al, 1
     je      .emit_win_prologue
@@ -499,11 +519,11 @@ compile_sitt:
     ; sub rsp, 40 (48 83 EC 28)
     mov     dword [rbp + rdi], 0x28EC8348
     add     rdi, 4
-    ; mov r13, 0x00403000
+    ; mov r13, 0x00403000 (tape in .bss)
     mov     word [rbp + rdi], 0xBD49
     mov     qword [rbp + rdi + 2], 0x00403000
     add     rdi, 10
-    ; mov r15, 0x0040B000
+    ; mov r15, 0x0040B000 (out_buf in .bss)
     mov     word [rbp + rdi], 0xBF49
     mov     qword [rbp + rdi + 2], 0x0040B000
     add     rdi, 10
@@ -514,30 +534,24 @@ compile_sitt:
     jmp     .comp_loop
 
 .emit_elf_prologue:
-    ; mov r13, 0x00601000 (tape in .bss at 0x601000)
     mov     word [rbp + rdi], 0xBD49
     mov     qword [rbp + rdi + 2], 0x00601000
     add     rdi, 10
-    ; mov r15, 0x00609000 (out_buf in .bss at 0x609000)
     mov     word [rbp + rdi], 0xBF49
     mov     qword [rbp + rdi + 2], 0x00609000
     add     rdi, 10
-    ; xor r14d, r14d
     mov     word [rbp + rdi], 0x3145
     mov     byte [rbp + rdi + 2], 0xF6
     add     rdi, 3
     jmp     .comp_loop
 
 .emit_mac_prologue:
-    ; mov r13, 0x100002000 (tape in __DATA,__bss at 0x100002000)
     mov     word [rbp + rdi], 0xBD49
     mov     qword [rbp + rdi + 2], 0x100002000
     add     rdi, 10
-    ; mov r15, 0x10000A000 (out_buf in __DATA,__bss at 0x10000A000)
     mov     word [rbp + rdi], 0xBF49
     mov     qword [rbp + rdi + 2], 0x10000A000
     add     rdi, 10
-    ; xor r14d, r14d
     mov     word [rbp + rdi], 0x3145
     mov     byte [rbp + rdi + 2], 0xF6
     add     rdi, 3
@@ -569,23 +583,23 @@ compile_sitt:
     je      .c_loop_end
 
     movzx   ecx, word [code_buf + rbx]
-    cmp     cx, 0xA6C4          ; Ħ -> inc byte [r13] (41 FE 45 00)
+    cmp     cx, 0xA6C4          ; Ħ
     je      .c_inc
-    cmp     cx, 0x92C5          ; Œ -> dec byte [r13] (41 FE 4D 00)
+    cmp     cx, 0x92C5          ; Œ
     je      .c_dec
-    cmp     cx, 0xA9CA          ; ʩ -> inc r13 (49 FF C5)
+    cmp     cx, 0xA9CA          ; ʩ
     je      .c_right
-    cmp     cx, 0xA7C2          ; § -> dec r13 (49 FF CD)
+    cmp     cx, 0xA7C2          ; §
     je      .c_left
-    cmp     cx, 0xB0C9          ; ɰ -> shl byte [r13], 1 (41 D0 65 00)
+    cmp     cx, 0xB0C9          ; ɰ
     je      .c_double
-    cmp     cx, 0xB1C9          ; ɱ -> swap [r13], [r13+1]
+    cmp     cx, 0xB1C9          ; ɱ
     je      .c_swap
-    cmp     cx, 0xAEC9          ; ɮ -> not byte [r13] (41 F6 55 00)
+    cmp     cx, 0xAEC9          ; ɮ
     je      .c_not
-    cmp     cx, 0xA8CA          ; ʨ -> mov byte [r13], 0 (41 C6 45 00 00)
+    cmp     cx, 0xA8CA          ; ʨ
     je      .c_zero
-    cmp     cx, 0xA4CA          ; ʤ -> copy [r13] -> [r13+1] (41 8A 45 00 41 88 45 01)
+    cmp     cx, 0xA4CA          ; ʤ
     je      .c_dup
     cmp     cx, 0xA9CE          ; Ω
     je      .c_loop_start
@@ -751,46 +765,35 @@ compile_sitt:
     je      build_linux_elf
     jmp     build_mac_app
 
-; --- Emit Windows PE (.exe) to stdout ---
+; --- Emit Windows GUI PE (.exe) to stdout (MessageBoxA popup, no console) ---
 build_pe_exe:
-    mov     byte [rbp + rdi], 0xB9
-    mov     dword [rbp + rdi + 1], -11
+    ; Null-terminate output buffer: mov byte [r15 + r14], 0 (43 C6 04 37 00)
+    mov     dword [rbp + rdi], 0x3704C643
+    mov     byte [rbp + rdi + 4], 0x00
     add     rdi, 5
 
-    ; call [rip + disp32] -> IAT GetStdHandle at RVA 0x2048
+    ; xor ecx, ecx (31 C9) -> hWnd = NULL
+    mov     word [rbp + rdi], 0xC931
+    add     rdi, 2
+
+    ; mov rdx, r15 (4C 89 FA) -> lpText = out_buf
+    mov     byte [rbp + rdi], 0x4C
+    mov     word [rbp + rdi + 1], 0xFA89
+    add     rdi, 3
+
+    ; mov r8, 0x004020B2 (49 B8 B2 20 40 00 00 00 00 00) -> lpCaption = "shitinthetoilet"
+    mov     word [rbp + rdi], 0xB849
+    mov     qword [rbp + rdi + 2], 0x004020B2
+    add     rdi, 10
+
+    ; xor r9d, r9d (45 31 C9) -> uType = MB_OK (0)
+    mov     word [rbp + rdi], 0x3145
+    mov     byte [rbp + rdi + 2], 0xC9
+    add     rdi, 3
+
+    ; call [rip + disp32] -> IAT MessageBoxA at RVA 0x206C
     mov     word [rbp + rdi], 0x15FF
-    mov     eax, 0x2048
-    mov     ecx, 0x1000
-    add     ecx, edi
-    add     ecx, 6
-    sub     eax, ecx
-    mov     [rbp + rdi + 2], eax
-    add     rdi, 6
-
-    ; mov rcx, rax (48 89 C1); mov rdx, r15 (4C 89 FA); mov r8d, r14d (45 89 F0)
-    mov     byte [rbp + rdi], 0x48
-    mov     word [rbp + rdi + 1], 0xC189
-    mov     byte [rbp + rdi + 3], 0x4C
-    mov     word [rbp + rdi + 4], 0xFA89
-    mov     byte [rbp + rdi + 6], 0x45
-    mov     word [rbp + rdi + 7], 0xF089
-    add     rdi, 9
-
-    ; lea r9, [r13 + 0x7F00] (4D 8D 8D 00 7F 00 00)
-    mov     dword [rbp + rdi], 0x008D8D4D
-    mov     word [rbp + rdi + 4], 0x007F
-    mov     byte [rbp + rdi + 6], 0x00
-    add     rdi, 7
-
-    ; mov qword [rsp+32], 0 (48 C7 44 24 20 00 00 00 00)
-    mov     dword [rbp + rdi], 0x2444C748
-    mov     byte [rbp + rdi + 4], 0x20
-    mov     dword [rbp + rdi + 5], 0
-    add     rdi, 9
-
-    ; call WriteFile IAT (0x2050)
-    mov     word [rbp + rdi], 0x15FF
-    mov     eax, 0x2050
+    mov     eax, 0x206C
     mov     ecx, 0x1000
     add     ecx, edi
     add     ecx, 6
@@ -802,9 +805,9 @@ build_pe_exe:
     mov     word [rbp + rdi], 0xC931
     add     rdi, 2
 
-    ; call ExitProcess IAT (0x2058)
+    ; call [rip + disp32] -> IAT ExitProcess at RVA 0x205C
     mov     word [rbp + rdi], 0x15FF
-    mov     eax, 0x2058
+    mov     eax, 0x205C
     mov     ecx, 0x1000
     add     ecx, edi
     add     ecx, 6
@@ -873,23 +876,22 @@ build_linux_elf:
     mov     [r8 + rcx - 1], al
     loop    .elf_zero
 
-    mov     dword [r8 + 0x00], 0x464C457F   ; \x7FELF
-    mov     byte  [r8 + 0x04], 2            ; ELFCLASS64
-    mov     byte  [r8 + 0x05], 1            ; ELFDATA2LSB
-    mov     byte  [r8 + 0x06], 1            ; EV_CURRENT
-    mov     word  [r8 + 0x10], 2            ; ET_EXEC
-    mov     word  [r8 + 0x12], 0x3E         ; EM_X86_64
-    mov     dword [r8 + 0x14], 1            ; EV_CURRENT
-    mov     qword [r8 + 0x18], 0x4000B0     ; e_entry
-    mov     qword [r8 + 0x20], 0x40         ; e_phoff
-    mov     word  [r8 + 0x34], 64           ; e_ehsize
-    mov     word  [r8 + 0x36], 56           ; e_phentsize
-    mov     word  [r8 + 0x38], 2            ; e_phnum
+    mov     dword [r8 + 0x00], 0x464C457F
+    mov     byte  [r8 + 0x04], 2
+    mov     byte  [r8 + 0x05], 1
+    mov     byte  [r8 + 0x06], 1
+    mov     word  [r8 + 0x10], 2
+    mov     word  [r8 + 0x12], 0x3E
+    mov     dword [r8 + 0x14], 1
+    mov     qword [r8 + 0x18], 0x4000B0
+    mov     qword [r8 + 0x20], 0x40
+    mov     word  [r8 + 0x34], 64
+    mov     word  [r8 + 0x36], 56
+    mov     word  [r8 + 0x38], 2
 
     mov     rax, 0xB0
     add     rax, rdi
 
-    ; PT_LOAD #1 (RWX code at 0x400000)
     mov     dword [r8 + 0x40], 1
     mov     dword [r8 + 0x44], 7
     mov     qword [r8 + 0x48], 0
@@ -899,7 +901,6 @@ build_linux_elf:
     mov     qword [r8 + 0x68], rax
     mov     qword [r8 + 0x70], 0x1000
 
-    ; PT_LOAD #2 (RW .bss at 0x601000)
     mov     dword [r8 + 0x78], 1
     mov     dword [r8 + 0x7C], 6
     mov     qword [r8 + 0x80], 0
@@ -946,17 +947,15 @@ build_mac_app:
     mov     [r8 + rcx - 1], al
     loop    .mac_zero
 
-    ; Mach-O 64-bit Header (32 bytes)
-    mov     eax, 0xFEEDFACF                 ; MH_MAGIC_64
+    mov     eax, 0xFEEDFACF
     mov     [r8 + 0x00], eax
-    mov     dword [r8 + 0x04], 0x01000007   ; CPU_TYPE_X86_64
-    mov     dword [r8 + 0x08], 3            ; CPU_SUBTYPE_X86_64_ALL
-    mov     dword [r8 + 0x0C], 2            ; MH_EXECUTE
-    mov     dword [r8 + 0x10], 4            ; ncmds = 4
-    mov     dword [r8 + 0x14], 320          ; sizeofcmds
-    mov     dword [r8 + 0x18], 1            ; MH_NOUNDEFS
+    mov     dword [r8 + 0x04], 0x01000007
+    mov     dword [r8 + 0x08], 3
+    mov     dword [r8 + 0x0C], 2
+    mov     dword [r8 + 0x10], 4
+    mov     dword [r8 + 0x14], 320
+    mov     dword [r8 + 0x18], 1
 
-    ; Cmd 1 (0x20): LC_SEGMENT_64 __PAGEZERO (72 bytes)
     mov     dword [r8 + 0x20], 0x19
     mov     dword [r8 + 0x24], 72
     mov     word  [r8 + 0x28], '__'
@@ -964,7 +963,6 @@ build_mac_app:
     mov     dword [r8 + 0x2E], 'ZERO'
     mov     qword [r8 + 0x40], 0x100000000
 
-    ; Cmd 2 (0x68): LC_SEGMENT_64 __TEXT (152 bytes)
     mov     dword [r8 + 0x68], 0x19
     mov     dword [r8 + 0x6C], 152
     mov     word  [r8 + 0x70], '__'
@@ -976,7 +974,6 @@ build_mac_app:
     mov     dword [r8 + 0xA0], 7
     mov     dword [r8 + 0xA4], 7
     mov     dword [r8 + 0xA8], 1
-    ; Section __text (0xB0, 80 bytes)
     mov     word  [r8 + 0xB0], '__'
     mov     dword [r8 + 0xB2], 'text'
     mov     word  [r8 + 0xC0], '__'
@@ -984,10 +981,9 @@ build_mac_app:
     mov     qword [r8 + 0xD0], 0x100001000
     mov     qword [r8 + 0xD8], rdi
     mov     dword [r8 + 0xE0], 0x1000
-    mov     eax, 0x80000400                 ; S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS
+    mov     eax, 0x80000400
     mov     [r8 + 0xEC], eax
 
-    ; Cmd 3 (0x100): LC_SEGMENT_64 __DATA (72 bytes)
     mov     dword [r8 + 0x100], 0x19
     mov     dword [r8 + 0x104], 72
     mov     word  [r8 + 0x108], '__'
@@ -997,13 +993,11 @@ build_mac_app:
     mov     dword [r8 + 0x138], 3
     mov     dword [r8 + 0x13C], 3
 
-    ; Cmd 4 (0x148): LC_MAIN (24 bytes)
-    mov     eax, 0x80000028                 ; LC_MAIN
+    mov     eax, 0x80000028
     mov     [r8 + 0x148], eax
     mov     dword [r8 + 0x14C], 24
     mov     qword [r8 + 0x150], 0x1000
 
-    ; Copy machine code to file offset 0x1000
     mov     rcx, rdi
     xor     rdx, rdx
 .mac_cp_code:
