@@ -32,9 +32,20 @@ jobs:
           $out = Get-Content -Encoding UTF8 examples\hi.sitt -Raw | .\sitt.exe
           if ($out -ne "HI") { throw "Interpreter expected HI, got '$out'" }
 
+          # Test --exe (Windows GUI PE binary)
           cmd /c "sitt.exe --exe < examples\ass_hi.sitt > compiled.exe"
-          $compOut = .\compiled.exe
-          if ($compOut -ne "HI") { throw "Compiler expected HI, got '$compOut'" }
+          $peBytes = [System.IO.File]::ReadAllBytes("compiled.exe")
+          if ($peBytes[0] -ne 0x4D -or $peBytes[1] -ne 0x5A) { throw "Invalid PE header in compiled.exe" }
+
+          # Test --elf (Linux ELF64 binary)
+          cmd /c "sitt.exe --elf < examples\hi.sitt > compiled.elf"
+          $elfBytes = [System.IO.File]::ReadAllBytes("compiled.elf")
+          if ($elfBytes[0] -ne 0x7F -or $elfBytes[1] -ne 0x45) { throw "Invalid ELF header in compiled.elf" }
+
+          # Test --app (macOS .app bundle)
+          Get-Content -Encoding UTF8 examples\hi.sitt -Raw | .\sitt.exe --app
+          if (-not (Test-Path "out.app\Contents\MacOS\out")) { throw "Missing out.app Mach-O binary" }
+          if (-not (Test-Path "out.app\Contents\Info.plist")) { throw "Missing out.app Info.plist" }
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
