@@ -1,4 +1,4 @@
-; sitt-mac.asm - macOS x86-64 shitinthetoilet (.sitt) interpreter with inline ass
+; sitt-mac.asm - macOS x86-64 shitinthetoilet (.sitt) interpreter
 ; assemble & link on x86-64 macOS:
 ;   nasm -f macho64 sitt-mac.asm -o sitt-mac.o
 ;   ld -macosx_version_min 10.15 -e _start -no_pie -lSystem -L$(xcrun --show-sdk-path)/usr/lib sitt-mac.o -o sitt-mac
@@ -14,16 +14,13 @@ section .bss
 section .data
     eof_msg     db "MissingEndError: shitinthetoilet program must end with 🏁!", 10
     eof_len     equ $ - eof_msg
-    syntax_msg  db "SyntaxError: illegal ASCII char! Use weird glyphs or ⚡ ass ⚡ blocks only.", 10
+    syntax_msg  db "SyntaxError: illegal ASCII char! Use valid glyphs or ⚡ ass ⚡ blocks only.", 10
     syntax_len  equ $ - syntax_msg
-    mac_err_msg db "MacSkillIssueError: Linux exclusive glyph detected! Recompile on Linux.", 10
-    mac_err_len equ $ - mac_err_msg
 
 section .text
     global _start
 
 _start:
-    ; macOS sys_mmap (0x20000C5): NULL, 4096, PROT_RWX(7), MAP_PRIVATE|MAP_ANON(0x1002), -1, 0
     mov     rax, 0x20000C5
     xor     rdi, rdi
     mov     rsi, 4096
@@ -34,7 +31,6 @@ _start:
     syscall
     mov     r15, rax
 
-    ; macOS sys_read (0x2000003): stdin(0), code_buf, 65536
     mov     rax, 0x2000003
     xor     rdi, rdi
     lea     rsi, [code_buf]
@@ -45,7 +41,7 @@ _start:
     xor     rbx, rbx
     lea     r13, [tape]
     xor     r14, r14
-    lea     r10, [code_buf]     ; r10 = base pointer to code_buf for PIC addressing
+    lea     r10, [code_buf]
 
 main_loop:
     cmp     rbx, r12
@@ -76,7 +72,7 @@ main_loop:
     cmp     ecx, 0x009E88E2     ; ∞
     je      op_loop_end
 
-    ; 2-byte weird letters
+    ; 2-byte glyphs
     movzx   ecx, word [r10 + rbx]
     cmp     cx, 0xA6C4          ; Ħ
     je      op_inc
@@ -86,20 +82,18 @@ main_loop:
     je      op_right
     cmp     cx, 0xA7C2          ; §
     je      op_left
+    cmp     cx, 0xB0C9          ; ɰ
+    je      op_double
+    cmp     cx, 0xB1C9          ; ɱ
+    je      op_swap
+    cmp     cx, 0xAEC9          ; ɮ
+    je      op_not
+    cmp     cx, 0xA8CA          ; ʨ
+    je      op_zero
+    cmp     cx, 0xA4CA          ; ʤ
+    je      op_dup
     cmp     cx, 0xA9CE          ; Ω
     je      op_loop_start
-
-    ; Linux-only glyphs
-    cmp     cx, 0xB0C9          ; ɰ
-    je      err_mac
-    cmp     cx, 0xB1C9          ; ɱ
-    je      err_mac
-    cmp     cx, 0xAEC9          ; ɮ
-    je      err_mac
-    cmp     cx, 0xA8CA          ; ʨ
-    je      err_mac
-    cmp     cx, 0xA4CA          ; ʤ
-    je      err_mac
 
     jmp     err_syntax
 
@@ -120,6 +114,35 @@ op_right:
 
 op_left:
     dec     r13
+    add     rbx, 2
+    jmp     main_loop
+
+op_double:
+    shl     byte [r13], 1
+    add     rbx, 2
+    jmp     main_loop
+
+op_swap:
+    mov     al, [r13]
+    mov     dl, [r13 + 1]
+    mov     [r13], dl
+    mov     [r13 + 1], al
+    add     rbx, 2
+    jmp     main_loop
+
+op_not:
+    not     byte [r13]
+    add     rbx, 2
+    jmp     main_loop
+
+op_zero:
+    mov     byte [r13], 0
+    add     rbx, 2
+    jmp     main_loop
+
+op_dup:
+    mov     al, [r13]
+    mov     [r13 + 1], al
     add     rbx, 2
     jmp     main_loop
 
@@ -358,16 +381,6 @@ err_syntax:
     mov     rdi, 2
     lea     rsi, [syntax_msg]
     mov     rdx, syntax_len
-    syscall
-    mov     rax, 0x2000001
-    mov     rdi, 1
-    syscall
-
-err_mac:
-    mov     rax, 0x2000004
-    mov     rdi, 2
-    lea     rsi, [mac_err_msg]
-    mov     rdx, mac_err_len
     syscall
     mov     rax, 0x2000001
     mov     rdi, 1
