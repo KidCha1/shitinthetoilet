@@ -2,9 +2,9 @@
 
 x86-64 esolang written with `Win + .` symbols and inline x86-64 machine code (`ass`). no normal ascii letters or numbers allowed in source files.
 
-all opcodes work identically across windows, linux, and macos. `sitt.asm` compiles natively on both windows and linux and includes an AOT compiler (`--exe`, `--elf`, `--app`) that outputs standalone native binaries with zero external linkers. `sitt-mac.asm` provides the native macos interpreter.
+all opcodes work identically across windows, linux, and macos. `sitt.asm` compiles natively on both windows and linux and includes an AOT compiler (`--exe`, `--elf`, `--app`) that outputs standalone native binaries with zero external linkers (and builds `--exe` targets as native Windows GUI apps). `sitt-mac.asm` provides the native macos interpreter.
 
-## building from source
+## building `sitt` from source
 
 ### windows (`sitt.asm`)
 ```powershell
@@ -24,44 +24,49 @@ nasm -f macho64 sitt-mac.asm -o sitt-mac.o
 ld -macosx_version_min 10.15 -e _start -no_pie -lSystem -L$(xcrun --show-sdk-path)/usr/lib sitt-mac.o -o sitt-mac
 ```
 
-## running & compiling `.sitt` files
+## running `.sitt` files
 
-### interpret directly
-
-windows (powershell):
-```powershell
-chcp 65001
-Get-Content -Encoding UTF8 examples\hi.sitt -Raw | .\sitt.exe
+### windows (command prompt / `cmd.exe`)
+```cmd
+chcp 65001 > nul && sitt.exe < examples\hi.sitt
 ```
 
-linux / macos:
+### windows (powershell)
+use `cmd /c` so powershell's `|` pipe doesnt re-encode UTF-8 bytes into Windows-1252:
+```powershell
+cmd /c "chcp 65001 > nul && .\sitt.exe < examples\hi.sitt"
+```
+
+### linux / macos
 ```bash
 ./sitt < examples/hi.sitt
 ```
 
-### compile `.sitt` to standalone executables (`--exe`, `--elf`, `--app`)
+## compiling `.sitt` projects (`--exe`, `--elf`, `--app`)
 
-note: on windows, use `cmd /c` when redirecting binary stdout (`--exe` / `--elf`) so powershell's `>` pipe doesnt corrupt raw binary bytes with UTF-16 encoding.
+`sitt` itself runs in the terminal, while `--exe` compiles your `.sitt` program into a standalone native Windows GUI executable (`WINDOWS_GUI` subsystem with a `MessageBoxA` popup window—no console window).
 
-windows:
+### windows
 ```powershell
-# compile to windows .exe
-cmd /c "sitt.exe --exe < examples\hi.sitt > hi.exe"
+# compile to standalone windows gui .exe
+cmd /c ".\sitt.exe --exe < examples\gui_demo.sitt > gui_demo.exe"
+.\gui_demo.exe
 
-# cross-compile to linux elf
-cmd /c "sitt.exe --elf < examples\hi.sitt > hi"
+# cross-compile to linux elf64
+cmd /c ".\sitt.exe --elf < examples\hi.sitt > hi"
 
 # cross-compile to macos .app bundle (creates out.app/)
-Get-Content -Encoding UTF8 examples\hi.sitt -Raw | .\sitt.exe --app
+cmd /c ".\sitt.exe --app < examples\hi.sitt"
 ```
 
-linux:
+### linux
 ```bash
-# compile to linux elf
+# compile to standalone linux elf64
 ./sitt --elf < examples/hi.sitt > hi && chmod +x hi
+./hi
 
-# cross-compile to windows .exe
-./sitt --exe < examples/hi.sitt > hi.exe
+# cross-compile to windows gui .exe
+./sitt --exe < examples/gui_demo.sitt > gui_demo.exe
 
 # cross-compile to macos .app bundle (creates out.app/)
 ./sitt --app < examples/hi.sitt
@@ -82,7 +87,7 @@ linux:
 - `ʨ` : zero out current cell (`mov byte [ptr], 0`)
 - `ʤ` : duplicate current cell to next cell (`[ptr + 1] = [ptr]`)
 - `⚡` : start/end inline `ass` (x86-64 machine code) block
-- `🏁` : flush output buffer to stdout and exit (required at the end)
+- `🏁` : flush output buffer and exit (required at the end)
 
 ## examples
 
@@ -95,6 +100,41 @@ linux:
 ```text
 ⚡ ⁴¹ Ç⁶ ⁴⁵ ∅∅ ⁴⁸ ⚡ •
 ⚡ ⁴¹ ƒ€ ⁴⁵ ∅∅ ⚡ •
+🏁
+```
+
+`examples/gui_demo.sitt` (renders a framed `+----------------+` GUI popup box when compiled with `--exe`):
+```text
+ʨ ĦĦĦĦĦĦĦĦĦĦ ɰ ɰ ĦĦĦ •
+ʨ ĦĦĦĦĦĦĦĦĦĦĦĦ ɰ ɰ Œ Œ Œ
+ʩ ĦĦĦĦĦĦĦĦĦĦĦĦĦĦĦĦ
+Ω § • ʩ Œ ∞
+§ •
+ʨ ĦĦĦĦĦĦĦĦĦĦ •
+⚡ ⁴¹ Ç⁶ ⁴⁵ ∅∅ ⁷Ç ⚡ •
+⚡ ⁴¹ Ç⁶ ⁴⁵ ∅∅ ²∅ ⚡ •
+⚡ ⁴¹ Ç⁶ ⁴⁵ ∅∅ ⁵³ ⚡ •
+⚡ ⁴¹ Ç⁶ ⁴⁵ ∅∅ ⁴⁹ ⚡ •
+⚡ ⁴¹ Ç⁶ ⁴⁵ ∅∅ ⁵⁴ ⚡ •
+⚡ ⁴¹ Ç⁶ ⁴⁵ ∅∅ ⁵⁴ ⚡ •
+⚡ ⁴¹ Ç⁶ ⁴⁵ ∅∅ ²∅ ⚡ •
+⚡ ⁴¹ Ç⁶ ⁴⁵ ∅∅ ⁴⁷ ⚡ •
+⚡ ⁴¹ Ç⁶ ⁴⁵ ∅∅ ⁵⁵ ⚡ •
+⚡ ⁴¹ Ç⁶ ⁴⁵ ∅∅ ⁴⁹ ⚡ •
+⚡ ⁴¹ Ç⁶ ⁴⁵ ∅∅ ²∅ ⚡ •
+⚡ ⁴¹ Ç⁶ ⁴⁵ ∅∅ ⁵⁷ ⚡ •
+⚡ ⁴¹ Ç⁶ ⁴⁵ ∅∅ ⁴ƒ ⚡ •
+⚡ ⁴¹ Ç⁶ ⁴⁵ ∅∅ ⁵² ⚡ •
+⚡ ⁴¹ Ç⁶ ⁴⁵ ∅∅ ⁴ß ⚡ •
+⚡ ⁴¹ Ç⁶ ⁴⁵ ∅∅ ⁵³ ⚡ •
+⚡ ⁴¹ Ç⁶ ⁴⁵ ∅∅ ²∅ ⚡ •
+⚡ ⁴¹ Ç⁶ ⁴⁵ ∅∅ ⁷Ç ⚡ •
+ʨ ĦĦĦĦĦĦĦĦĦĦ •
+ʨ ĦĦĦĦĦĦĦĦĦĦ ɰ ɰ ĦĦĦ •
+ʨ ĦĦĦĦĦĦĦĦĦĦĦĦ ɰ ɰ Œ Œ Œ
+ʩ ĦĦĦĦĦĦĦĦĦĦĦĦĦĦĦĦ
+Ω § • ʩ Œ ∞
+§ •
 🏁
 ```
 
@@ -111,15 +151,7 @@ anything inside `⚡ ... ⚡` gets assembled straight into executable memory (or
 - `ret` (`0xC3`) is appended automatically in interpreter mode (do not include `Ç³` inside `⚡ ... ⚡` if you plan to AOT-compile with `--exe`, `--elf`, or `--app`, since AOT mode inlines your bytes directly without calling a subroutine)
 - dont clobber `rbx`, `r12`, `r13`, `r14`, or `r15` unless you push/pop them
 
-example doing the exact same `HI` output using `mov byte [r13], 0x48` and `inc byte [r13]`:
-
-```text
-⚡ ⁴¹ Ç⁶ ⁴⁵ ∅∅ ⁴⁸ ⚡ •
-⚡ ⁴¹ ƒ€ ⁴⁵ ∅∅ ⚡ •
-🏁
-```
-
 ## common errors
 
-- `SyntaxError`: stray ascii character in the file, unmatched `Ω`/`∞`, or an odd number of nibbles inside `⚡ ... ⚡`
+- `SyntaxError`: stray ascii character in the file, UTF-8 BOM at start of file, unmatched `Ω`/`∞`, or an odd number of nibbles inside `⚡ ... ⚡`
 - `MissingEndError`: forgot `🏁` at the end of the file
