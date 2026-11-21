@@ -44,9 +44,6 @@ section .bss
     h_stdout        resq 1
     h_stderr        resq 1
     h_file          resq 1
-%else
-    argc            resq 1
-    argv            resq 16
 %endif
 
 section .data
@@ -82,7 +79,6 @@ section .data
     plist_len       equ $ - plist_data
 
     ; Minimal 64-bit Windows PE header + import table (kernel32: GetStdHandle, WriteFile, ExitProcess)
-    ; File size = 0x400 + code_aligned; RVA .text = 0x1000, RVA .idata = 0x2000, RVA .bss = 0x3000
     pe_dos_stub:
         db 'M','Z', 0x90,0x00, 0x03,0x00, 0x00,0x00, 0x04,0x00, 0x00,0x00, 0xFF,0xFF, 0x00,0x00
         db 0xB8,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00, 0x40,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00
@@ -146,10 +142,6 @@ section .data
     pe_headers_end:
 
     ; .idata contents at RVA 0x2000 (File offset 0x1400)
-    ; 0x2000: Import Descriptor (20 bytes) + Null Descriptor (20 bytes) = 40 bytes (0x28)
-    ; 0x2028: ILT (4 * 8 = 32 bytes)
-    ; 0x2048: IAT (4 * 8 = 32 bytes) -> GetStdHandle=0x2048, WriteFile=0x2050, ExitProcess=0x2058
-    ; 0x2068: Strings
     pe_idata:
         dd 0x2028                       ; OriginalFirstThunk (ILT)
         dd 0, 0
@@ -484,7 +476,7 @@ next_1:
     inc     rbx
     jmp     main_loop
 
-; =============================================================================
+; =========================================================================
 ; AOT COMPILER MODE (--exe = 1, --elf = 2, --app = 3)
 ; Emits native x86-64 machine code into jit_buf (offset in rdi):
 ;   R13 = tape pointer, R14 = out_buf write offset, R15 = out_buf base
@@ -507,15 +499,15 @@ compile_sitt:
     ; sub rsp, 40 (48 83 EC 28)
     mov     dword [rbp + rdi], 0x28EC8348
     add     rdi, 4
-    ; mov r13, 0x00403000 (49 BD 00 30 40 00 00 00 00 00)
+    ; mov r13, 0x00403000
     mov     word [rbp + rdi], 0xBD49
     mov     qword [rbp + rdi + 2], 0x00403000
     add     rdi, 10
-    ; mov r15, 0x0040B000 (49 BF 00 B0 40 00 00 00 00 00)
+    ; mov r15, 0x0040B000
     mov     word [rbp + rdi], 0xBF49
     mov     qword [rbp + rdi + 2], 0x0040B000
     add     rdi, 10
-    ; xor r14d, r14d (45 31 F6)
+    ; xor r14d, r14d
     mov     word [rbp + rdi], 0x3145
     mov     byte [rbp + rdi + 2], 0xF6
     add     rdi, 3
@@ -633,7 +625,6 @@ compile_sitt:
     jmp     .comp_loop
 
 .c_swap:
-    ; mov al,[r13] (41 8A 45 00); mov dl,[r13+1] (41 8A 55 01); mov [r13],dl (41 88 55 00); mov [r13+1],al (41 88 45 01)
     mov     dword [rbp + rdi], 0x00458A41
     mov     dword [rbp + rdi + 4], 0x01558A41
     mov     dword [rbp + rdi + 8], 0x00558841
@@ -663,7 +654,6 @@ compile_sitt:
     jmp     .comp_loop
 
 .c_buf:
-    ; mov al,[r13] (41 8A 45 00); mov [r15+r14],al (43 88 04 37); inc r14 (49 FF C6)
     mov     dword [rbp + rdi], 0x00458A41
     mov     dword [rbp + rdi + 4], 0x37048843
     mov     word [rbp + rdi + 8], 0xFF49
@@ -673,7 +663,6 @@ compile_sitt:
     jmp     .comp_loop
 
 .c_ass:
-    ; Inline ⚡ ass ⚡ bytes emitted directly into output binary!
     add     rbx, 3
     xor     r8, r8
     xor     r9b, r9b
@@ -717,14 +706,13 @@ compile_sitt:
     jmp     .comp_loop
 
 .c_loop_start:
-    ; cmp byte [r13], 0 (41 80 7D 00 00); jz rel32 (0F 84 00 00 00 00)
     mov     dword [rbp + rdi], 0x007D8041
     mov     byte [rbp + rdi + 4], 0x00
     mov     word [rbp + rdi + 5], 0x840F
     mov     dword [rbp + rdi + 7], 0
     add     rdi, 11
     lea     rax, [rel loop_stack]
-    mov     [rax + r10 * 8], rdi    ; save offset right after jz rel32
+    mov     [rax + r10 * 8], rdi
     inc     r10
     add     rbx, 2
     jmp     .comp_loop
@@ -734,17 +722,14 @@ compile_sitt:
     jz      err_syntax
     dec     r10
     lea     rax, [rel loop_stack]
-    mov     rsi, [rax + r10 * 8]    ; offset after jz rel32
-    ; cmp byte [r13], 0 (41 80 7D 00 00); jnz rel32 (0F 85 <rel32>)
+    mov     rsi, [rax + r10 * 8]
     mov     dword [rbp + rdi], 0x007D8041
     mov     byte [rbp + rdi + 4], 0x00
     mov     word [rbp + rdi + 5], 0x850F
     add     rdi, 11
-    ; back_rel = rsi - rdi
     mov     rax, rsi
     sub     rax, rdi
     mov     [rbp + rdi - 4], eax
-    ; fwd_rel = rdi - rsi
     mov     rax, rdi
     sub     rax, rsi
     mov     [rbp + rsi - 4], eax
@@ -768,22 +753,11 @@ compile_sitt:
 
 ; --- Emit Windows PE (.exe) to stdout ---
 build_pe_exe:
-    ; Append Windows epilogue:
-    ; mov ecx, -11 (B9 F5 FF FF FF)
-    ; call [rip + disp32] -> IAT GetStdHandle at RVA 0x2048
-    ; mov rcx, rax (48 89 C1)
-    ; mov rdx, r15 (4C 89 FA)
-    ; mov r8d, r14d (45 89 F0)
-    ; lea r9, [r13 + 0x7F00] (4D 8D 8D 00 7F 00 00)
-    ; mov qword [rsp+32], 0 (48 C7 44 24 20 00 00 00 00)
-    ; call [rip + disp32] -> IAT WriteFile at RVA 0x2050
-    ; xor ecx, ecx (31 C9)
-    ; call [rip + disp32] -> IAT ExitProcess at RVA 0x2058
     mov     byte [rbp + rdi], 0xB9
     mov     dword [rbp + rdi + 1], -11
     add     rdi, 5
 
-    ; call [rip + disp32] (FF 15 <disp32>), next RIP = 0x1000 + rdi + 6
+    ; call [rip + disp32] -> IAT GetStdHandle at RVA 0x2048
     mov     word [rbp + rdi], 0x15FF
     mov     eax, 0x2048
     mov     ecx, 0x1000
@@ -793,7 +767,7 @@ build_pe_exe:
     mov     [rbp + rdi + 2], eax
     add     rdi, 6
 
-    mov     dword [rbp + rdi], 0x894CC189       ; 89 C1 (part) -> write exact bytes:
+    ; mov rcx, rax (48 89 C1); mov rdx, r15 (4C 89 FA); mov r8d, r14d (45 89 F0)
     mov     byte [rbp + rdi], 0x48
     mov     word [rbp + rdi + 1], 0xC189
     mov     byte [rbp + rdi + 3], 0x4C
@@ -838,16 +812,13 @@ build_pe_exe:
     mov     [rbp + rdi + 2], eax
     add     rdi, 6
 
-    ; Assemble PE image in bin_buf (total size = 0x1600)
     lea     r8, [rel bin_buf]
-    ; Zero 0x1600 bytes
     mov     rcx, 0x1600
     xor     eax, eax
 .pe_zero:
     mov     [r8 + rcx - 1], al
     loop    .pe_zero
 
-    ; Copy PE headers (0x000..pe_headers_end)
     lea     rsi, [rel pe_dos_stub]
     mov     rcx, pe_headers_end - pe_dos_stub
     xor     rdx, rdx
@@ -857,7 +828,6 @@ build_pe_exe:
     inc     rdx
     loop    .pe_cp_hdr
 
-    ; Copy compiled machine code to file offset 0x400
     mov     rcx, rdi
     xor     rdx, rdx
 .pe_cp_code:
@@ -866,7 +836,6 @@ build_pe_exe:
     inc     rdx
     loop    .pe_cp_code
 
-    ; Copy .idata to file offset 0x1400
     lea     rsi, [rel pe_idata]
     mov     rcx, pe_idata_len
     xor     rdx, rdx
@@ -882,15 +851,6 @@ build_pe_exe:
 
 ; --- Emit Linux ELF64 executable to stdout ---
 build_linux_elf:
-    ; Append Linux epilogue:
-    ; mov eax, 1 (B8 01 00 00 00)
-    ; mov edi, 1 (BF 01 00 00 00)
-    ; mov rsi, r15 (4C 89 FE)
-    ; mov rdx, r14 (4C 89 F2)
-    ; syscall (0F 05)
-    ; mov eax, 60 (B8 3C 00 00 00)
-    ; xor edi, edi (31 FF)
-    ; syscall (0F 05)
     mov     byte [rbp + rdi], 0xB8
     mov     dword [rbp + rdi + 1], 1
     mov     byte [rbp + rdi + 5], 0xBF
@@ -913,8 +873,6 @@ build_linux_elf:
     mov     [r8 + rcx - 1], al
     loop    .elf_zero
 
-    ; ELF64 Header (64 bytes) + 2 Program Headers (2 * 56 = 112 bytes) = 176 bytes (0xB0)
-    ; Entry point = 0x4000B0
     mov     dword [r8 + 0x00], 0x464C457F   ; \x7FELF
     mov     byte  [r8 + 0x04], 2            ; ELFCLASS64
     mov     byte  [r8 + 0x05], 1            ; ELFDATA2LSB
@@ -929,29 +887,28 @@ build_linux_elf:
     mov     word  [r8 + 0x38], 2            ; e_phnum
 
     mov     rax, 0xB0
-    add     rax, rdi                        ; total file size
+    add     rax, rdi
 
-    ; PT_LOAD #1 (RX code at 0x400000)
-    mov     dword [r8 + 0x40], 1            ; PT_LOAD
-    mov     dword [r8 + 0x44], 7            ; PF_R | PF_W | PF_X
-    mov     qword [r8 + 0x48], 0            ; p_offset
-    mov     qword [r8 + 0x50], 0x400000     ; p_vaddr
-    mov     qword [r8 + 0x58], 0x400000     ; p_paddr
-    mov     qword [r8 + 0x60], rax          ; p_filesz
-    mov     qword [r8 + 0x68], rax          ; p_memsz
-    mov     qword [r8 + 0x70], 0x1000       ; p_align
+    ; PT_LOAD #1 (RWX code at 0x400000)
+    mov     dword [r8 + 0x40], 1
+    mov     dword [r8 + 0x44], 7
+    mov     qword [r8 + 0x48], 0
+    mov     qword [r8 + 0x50], 0x400000
+    mov     qword [r8 + 0x58], 0x400000
+    mov     qword [r8 + 0x60], rax
+    mov     qword [r8 + 0x68], rax
+    mov     qword [r8 + 0x70], 0x1000
 
-    ; PT_LOAD #2 (RW .bss at 0x601000, memsz 0x20000)
-    mov     dword [r8 + 0x78], 1            ; PT_LOAD
-    mov     dword [r8 + 0x7C], 6            ; PF_R | PF_W
-    mov     qword [r8 + 0x80], 0            ; p_offset
-    mov     qword [r8 + 0x88], 0x601000     ; p_vaddr
-    mov     qword [r8 + 0x90], 0x601000     ; p_paddr
-    mov     qword [r8 + 0x98], 0            ; p_filesz
-    mov     qword [r8 + 0xA0], 0x20000      ; p_memsz
-    mov     qword [r8 + 0xA8], 0x1000       ; p_align
+    ; PT_LOAD #2 (RW .bss at 0x601000)
+    mov     dword [r8 + 0x78], 1
+    mov     dword [r8 + 0x7C], 6
+    mov     qword [r8 + 0x80], 0
+    mov     qword [r8 + 0x88], 0x601000
+    mov     qword [r8 + 0x90], 0x601000
+    mov     qword [r8 + 0x98], 0
+    mov     qword [r8 + 0xA0], 0x20000
+    mov     qword [r8 + 0xA8], 0x1000
 
-    ; Copy code to offset 0xB0
     mov     rcx, rdi
     xor     rdx, rdx
 .elf_cp_code:
@@ -967,15 +924,6 @@ build_linux_elf:
 
 ; --- Build macOS out.app bundle (Mach-O x86-64 binary + Info.plist) ---
 build_mac_app:
-    ; Append macOS epilogue:
-    ; mov eax, 0x2000004
-    ; mov edi, 1
-    ; mov rsi, r15
-    ; mov rdx, r14
-    ; syscall
-    ; mov eax, 0x2000001
-    ; xor edi, edi
-    ; syscall
     mov     byte [rbp + rdi], 0xB8
     mov     dword [rbp + rdi + 1], 0x2000004
     mov     byte [rbp + rdi + 5], 0xBF
@@ -998,13 +946,9 @@ build_mac_app:
     mov     [r8 + rcx - 1], al
     loop    .mac_zero
 
-    ; Mach-O 64-bit Header (32 bytes) + 4 Load Commands:
-    ;   LC_SEGMENT_64 __PAGEZERO (72 bytes)
-    ;   LC_SEGMENT_64 __TEXT + __text section (72 + 80 = 152 bytes)
-    ;   LC_SEGMENT_64 __DATA (72 bytes, vaddr 0x100002000, vmsize 0x20000)
-    ;   LC_MAIN (24 bytes, entryoff = 0x1000)
-    ; Total sizeofcmds = 72 + 152 + 72 + 24 = 320 (0x140)
-    mov     dword [r8 + 0x00], 0xFEEDFACF   ; MH_MAGIC_64
+    ; Mach-O 64-bit Header (32 bytes)
+    mov     eax, 0xFEEDFACF                 ; MH_MAGIC_64
+    mov     [r8 + 0x00], eax
     mov     dword [r8 + 0x04], 0x01000007   ; CPU_TYPE_X86_64
     mov     dword [r8 + 0x08], 3            ; CPU_SUBTYPE_X86_64_ALL
     mov     dword [r8 + 0x0C], 2            ; MH_EXECUTE
@@ -1013,50 +957,51 @@ build_mac_app:
     mov     dword [r8 + 0x18], 1            ; MH_NOUNDEFS
 
     ; Cmd 1 (0x20): LC_SEGMENT_64 __PAGEZERO (72 bytes)
-    mov     dword [r8 + 0x20], 0x19         ; LC_SEGMENT_64
+    mov     dword [r8 + 0x20], 0x19
     mov     dword [r8 + 0x24], 72
-    mov     dword [r8 + 0x28], 'P','A','G','E' ; "__PAGEZERO"
     mov     word  [r8 + 0x28], '__'
     mov     dword [r8 + 0x2A], 'PAGE'
     mov     dword [r8 + 0x2E], 'ZERO'
-    mov     qword [r8 + 0x40], 0x100000000  ; vmsize
+    mov     qword [r8 + 0x40], 0x100000000
 
     ; Cmd 2 (0x68): LC_SEGMENT_64 __TEXT (152 bytes)
     mov     dword [r8 + 0x68], 0x19
     mov     dword [r8 + 0x6C], 152
     mov     word  [r8 + 0x70], '__'
     mov     dword [r8 + 0x72], 'TEXT'
-    mov     qword [r8 + 0x80], 0x100000000  ; vmaddr
-    mov     qword [r8 + 0x88], 0x2000       ; vmsize
-    mov     qword [r8 + 0x90], 0            ; fileoff
-    mov     qword [r8 + 0x98], 0x2000       ; filesize
-    mov     dword [r8 + 0xA0], 7            ; maxprot RWX
-    mov     dword [r8 + 0xA4], 7            ; initprot RWX
-    mov     dword [r8 + 0xA8], 1            ; nsects = 1
+    mov     qword [r8 + 0x80], 0x100000000
+    mov     qword [r8 + 0x88], 0x2000
+    mov     qword [r8 + 0x90], 0
+    mov     qword [r8 + 0x98], 0x2000
+    mov     dword [r8 + 0xA0], 7
+    mov     dword [r8 + 0xA4], 7
+    mov     dword [r8 + 0xA8], 1
     ; Section __text (0xB0, 80 bytes)
     mov     word  [r8 + 0xB0], '__'
     mov     dword [r8 + 0xB2], 'text'
     mov     word  [r8 + 0xC0], '__'
     mov     dword [r8 + 0xC2], 'TEXT'
-    mov     qword [r8 + 0xD0], 0x100001000  ; addr
-    mov     qword [r8 + 0xD8], rdi          ; size
-    mov     dword [r8 + 0xE0], 0x1000       ; offset
-    mov     dword [r8 + 0xEC], 0x80000400   ; S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS
+    mov     qword [r8 + 0xD0], 0x100001000
+    mov     qword [r8 + 0xD8], rdi
+    mov     dword [r8 + 0xE0], 0x1000
+    mov     eax, 0x80000400                 ; S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS
+    mov     [r8 + 0xEC], eax
 
     ; Cmd 3 (0x100): LC_SEGMENT_64 __DATA (72 bytes)
     mov     dword [r8 + 0x100], 0x19
     mov     dword [r8 + 0x104], 72
     mov     word  [r8 + 0x108], '__'
     mov     dword [r8 + 0x10A], 'DATA'
-    mov     qword [r8 + 0x118], 0x100002000 ; vmaddr
-    mov     qword [r8 + 0x120], 0x20000     ; vmsize
-    mov     dword [r8 + 0x138], 3           ; maxprot RW
-    mov     dword [r8 + 0x13C], 3           ; initprot RW
+    mov     qword [r8 + 0x118], 0x100002000
+    mov     qword [r8 + 0x120], 0x20000
+    mov     dword [r8 + 0x138], 3
+    mov     dword [r8 + 0x13C], 3
 
     ; Cmd 4 (0x148): LC_MAIN (24 bytes)
-    mov     dword [r8 + 0x148], 0x80000028  ; LC_MAIN
+    mov     eax, 0x80000028                 ; LC_MAIN
+    mov     [r8 + 0x148], eax
     mov     dword [r8 + 0x14C], 24
-    mov     qword [r8 + 0x150], 0x1000      ; entryoff
+    mov     qword [r8 + 0x150], 0x1000
 
     ; Copy machine code to file offset 0x1000
     mov     rcx, rdi
@@ -1067,7 +1012,6 @@ build_mac_app:
     inc     rdx
     loop    .mac_cp_code
 
-    ; Create out.app/Contents/MacOS/out + Info.plist
 %if IS_WIN
     lea     rcx, [rel dir_app]
     xor     edx, edx
@@ -1079,13 +1023,12 @@ build_mac_app:
     xor     edx, edx
     call    CreateDirectoryA
 
-    ; Write out.app/Contents/MacOS/out
     lea     rcx, [rel path_macho]
-    mov     edx, 0x40000000                 ; GENERIC_WRITE
+    mov     edx, 0x40000000
     xor     r8d, r8d
     xor     r9d, r9d
-    mov     qword [rsp + 32], 2             ; CREATE_ALWAYS
-    mov     qword [rsp + 40], 0x80          ; FILE_ATTRIBUTE_NORMAL
+    mov     qword [rsp + 32], 2
+    mov     qword [rsp + 40], 0x80
     mov     qword [rsp + 48], 0
     call    CreateFileA
     mov     [rel h_file], rax
@@ -1100,7 +1043,6 @@ build_mac_app:
     mov     rcx, [rel h_file]
     call    CloseHandle
 
-    ; Write out.app/Contents/Info.plist
     lea     rcx, [rel path_plist]
     mov     edx, 0x40000000
     xor     r8d, r8d
@@ -1121,7 +1063,6 @@ build_mac_app:
     mov     rcx, [rel h_file]
     call    CloseHandle
 %else
-    ; mkdir("out.app", 0755), mkdir("out.app/Contents", 0755), mkdir("out.app/Contents/MacOS", 0755)
     mov     rax, 83
     lea     rdi, [rel dir_app]
     mov     rsi, 0755o
@@ -1135,7 +1076,6 @@ build_mac_app:
     mov     rsi, 0755o
     syscall
 
-    ; open("out.app/Contents/MacOS/out", O_WRONLY|O_CREAT|O_TRUNC, 0755)
     mov     rax, 2
     lea     rdi, [rel path_macho]
     mov     rsi, 0x241
@@ -1153,7 +1093,6 @@ build_mac_app:
     mov     rdi, r12
     syscall
 
-    ; open("out.app/Contents/Info.plist", O_WRONLY|O_CREAT|O_TRUNC, 0644)
     mov     rax, 2
     lea     rdi, [rel path_plist]
     mov     rsi, 0x241
