@@ -1,8 +1,6 @@
 # shitinthetoilet (.sitt)
 
-windows x86-64 esolang written with `Win + .` symbols and inline x86-64 machine code (`ass`). no normal ascii letters or numbers allowed in source files.
-
-windows only. linux/mac builds arent provided so you have to port the syscalls and recompile `sitt` yourself if youre on anything else.
+esolang written with `Win + .` symbols and inline x86-64 machine code (`ass`). no normal ascii letters or numbers allowed in source files.
 
 ## running a file
 
